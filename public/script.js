@@ -1,12 +1,29 @@
 let tasks = [];
+let useLocal = false;
+
+function loadLocalTasks() {
+    tasks = JSON.parse(localStorage.getItem('studyTasks')) || [];
+}
+
+function saveLocalTasks() {
+    localStorage.setItem('studyTasks', JSON.stringify(tasks));
+}
+
+function generateLocalId() {
+    return 'local_' + Date.now() + '_' + Math.random().toString(36).slice(2, 8);
+}
 
 async function fetchTasks() {
     try {
         const res = await fetch('/api/tasks');
+        if (!res.ok) throw new Error('Network response not ok');
         tasks = await res.json();
+        useLocal = false;
+        saveLocalTasks();
     } catch (err) {
-        console.error('Failed to load tasks', err);
-        tasks = [];
+        console.warn('Falling back to localStorage for tasks', err);
+        useLocal = true;
+        loadLocalTasks();
     }
 }
 
@@ -87,12 +104,22 @@ function addTask() {
 
     const newTask = { subject, task, date, priority, completed: false };
 
-    // send to server
+    // send to server, fallback to localStorage
     fetch('/api/tasks', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(newTask)
-    }).then(() => refreshTasks()).catch(err => console.error(err));
+    }).then(res => {
+        if (!res.ok) throw new Error('Failed to create on server');
+        return res.json();
+    }).then(() => refreshTasks()).catch(err => {
+        console.warn('POST failed, saving locally', err);
+        useLocal = true;
+        const localTask = Object.assign({ _id: generateLocalId() }, newTask);
+        tasks.unshift(localTask);
+        saveLocalTasks();
+        displayTasks();
+    });
 
     document.getElementById("subject").value = "";
     document.getElementById("task").value = "";
@@ -106,11 +133,27 @@ function completeTask(index) {
     const t = tasks[index];
     if (!t) return;
     const updated = { completed: !t.completed };
+    if (useLocal || String(t._id).startsWith('local_')) {
+        t.completed = updated.completed;
+        saveLocalTasks();
+        displayTasks();
+        return;
+    }
+
     fetch(`/api/tasks/${t._id}`, {
         method: 'PATCH',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(updated)
-    }).then(() => refreshTasks()).catch(err => console.error(err));
+    }).then(res => {
+        if (!res.ok) throw new Error('PATCH failed');
+        return res.json();
+    }).then(() => refreshTasks()).catch(err => {
+        console.warn('PATCH failed, switching to local fallback', err);
+        useLocal = true;
+        t.completed = updated.completed;
+        saveLocalTasks();
+        displayTasks();
+    });
 }
 
 
@@ -118,24 +161,54 @@ function deleteTask(index) {
 
     const t = tasks[index];
     if (!t) return;
+    if (useLocal || String(t._id).startsWith('local_')) {
+        tasks.splice(index, 1);
+        saveLocalTasks();
+        displayTasks();
+        return;
+    }
+
     fetch(`/api/tasks/${t._id}`, { method: 'DELETE' })
+        .then(res => {
+            if (!res.ok) throw new Error('DELETE failed');
+            return res.json();
+        })
         .then(() => refreshTasks())
-        .catch(err => console.error(err));
+        .catch(err => {
+            console.warn('DELETE failed, switching to local fallback', err);
+            useLocal = true;
+            tasks.splice(index, 1);
+            saveLocalTasks();
+            displayTasks();
+        });
 }
 
 
 function clearCompleted() {
 
     const completed = tasks.filter(task => task.completed);
+    if (useLocal) {
+        tasks = tasks.filter(task => !task.completed);
+        saveLocalTasks();
+        displayTasks();
+        return;
+    }
+
     Promise.all(completed.map(t => fetch(`/api/tasks/${t._id}`, { method: 'DELETE' })))
         .then(() => refreshTasks())
-        .catch(err => console.error(err));
+        .catch(err => {
+            console.warn('Bulk delete failed, switching to local fallback', err);
+            useLocal = true;
+            tasks = tasks.filter(task => !task.completed);
+            saveLocalTasks();
+            displayTasks();
+        });
 }
 
 
 function saveTasks() {
-
-    // legacy - tasks are persisted on server now
+    // keep a local copy for offline fallback
+    saveLocalTasks();
 }
 
 function escapeHtml(str) {
