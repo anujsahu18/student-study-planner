@@ -1,0 +1,14 @@
+services:
+  - type: web
+    name: student-study-planner
+    env: node
+    repo: https://github.com/anujsahu18/student-study-planner
+    branch: main
+    plan: free
+    buildCommand: npm install
+    startCommand: npm start
+    envVars:
+      - key: NODE_ENV
+        value: production
+      - key: MONGO_URI
+        value: "mongodb+srv://<db_username>:WiN17ITgfFP2GdtX@cluster0.0wagasm.mongodb.net/student-planner?retryWrites=true&w=majority"
